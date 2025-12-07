@@ -1,78 +1,64 @@
-name: get_images_from_payload.bin
-
+name: Extract Boot from Android Firmware
 on:
   workflow_dispatch:
-      inputs:
-        UPLOAD_CONFIG:
+    inputs:
+      partitions:
+        description: 'Partitions to extract (default: boot)'
+        required: true
+        default: 'boot'
+      rom_url:
+        description: 'URL to Android ROM'
+        required: true
+      UPLOAD_CONFIG:
           description: 'Upload Artifacts to Actions'
           required: true
-          default: "false"
+          default: "true"
           type: boolean
-        ROM_URL:
-          description: 'ROM directly link'
-          required: true
-          default: "https://cdnorg.d.miui.com/OS1.0.10.0.TKHCNXM/miui_ALIOTH_OS1.0.10.0.TKHCNXM_ddf5cf5ea0_13.0.zip"
-          type: string
-        PARTITIONS:
-          description: 'Partitions which you need to extract(Such as boot,vendor_dlkm,...,vendor_boot)'
-          required: true
-          default: "boot"
-          type: string
-        
-    
-env:
-  TZ: Asia/Shanghai
-  Payload_Dumper_Go_Url: https://github.com/ssut/payload-dumper-go/releases/download/1.2.2/payload-dumper-go_1.2.2_linux_amd64.tar.gz
 
 jobs:
-  make:
+  extract-boot:
     runs-on: ubuntu-latest
 
     steps:
+    # Step 1: Checkout the repo (if needed)
+    - name: Checkout repository
+      uses: actions/checkout@v4
 
-    - name: Clean Up Disk Space
+    # Step 2: Set up Python 3.12
+    - name: Set up Python 3.12
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.12'
+
+    # Step 3: Install payload-dumper from GitHub
+    - name: Install payload-dumper
       run: |
-        docker rmi `docker images -q`
-        sudo rm -rf /usr/share/dotnet /etc/mysql /etc/php /etc/apt/sources.list.d
-        sudo -E apt-get -y purge azure-cli ghc* zulu* llvm* firefox google* dotnet* powershell openjdk* mysql* php*
-        sudo -E apt-get -y autoremove --purge
-        sudo -E apt-get clean 
-        
-    - name: Clone the tools source code
+        pip install git+https://github.com/5ec1cff/payload-dumper
+
+    # Step 4: Extract the desired partitions (default to boot if not specified)
+    - name: Extract partitions
       run: |
-       cd ~
-       mkdir -p ~/payload_dumper_go
-       wget -O payload_dumper_go.tar.gz $Payload_Dumper_Go_Url
-       tar -C ~/payload_dumper_go/ -zxvf payload_dumper_go.tar.gz
-       
-  
-    - name: Download the ROM
+        payload_dumper --partitions ${{ github.event.inputs.partitions }} "${{ github.event.inputs.rom_url }}"
+
+    # Step 5: Compress the extracted img files
+    - name: Compress extracted files
       run: |
-       cd ~
-       wget -O rom.zip ${{ github.event.inputs.ROM_URL }}
-   
-    - name: unzip the ROM
-      run: |
-       cd ~
-       unzip rom.zip -d payload_dumper_go
-    
-    - name: extract the payload.bin
-      run: |
-       cd ~
-       cd payload_dumper_go
-       ./payload-dumper-go -o ~/payload_dumper_go -p ${{ github.event.inputs.PARTITIONS }} payload.bin
-   
-    - name: Upload Artifact
+        cd output
+        for img_file in *.img; do
+          zip "${img_file%.img}.zip" "$img_file"
+        done
+
+    # Step 6: Upload the compressed files
+    - name: Upload artifacts
       if: github.event.inputs.UPLOAD_CONFIG == 'true'
       uses: actions/upload-artifact@v4
       with:
-        name: Image-files
-        path: |
-          ~/payload_dumper_go/*.img
-          
-    - name: Upload images to WeTransfer
+        name: extracted-images
+        path: output/*.img
+
+    # Step 6, but Wenshushu
+    - name: Upload images to Wenshushu
       if: github.event.inputs.UPLOAD_CONFIG == 'false'
       run: |
-        cd ~
-        curl -sL https://git.io/file-transfer | sh
-        ./transfer wet ~/payload_dumper_go/*.img
+        curl -sL https://git.io/file-transfer | bash -s beta
+        ./transfer wss output/*.zip
